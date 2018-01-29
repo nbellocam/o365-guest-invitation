@@ -20,7 +20,7 @@ function getToken() {
 function createResponse(body, status) {
     return {
         status: status || 200,
-        body: body,
+        body: JSON.stringify(body),
         headers: {
             'Content-Type': 'application/json'
         }
@@ -89,11 +89,13 @@ function createGroup(token, name) {
     });
 }
 
-function getGroupID(token) {
+function getGroupID(token, context) {
     return new Promise((resolve, reject) => {
+        context.log('- Get all groups');
         getGroups(token)
             .then(groups => {
                 if (groups && groups.length > 0) {
+                    context.log('- Get all group OK and exists. Next: count members');
                     groups.sort((g1, g2) => {
                         const nameA = g1.displayName.toLowerCase();
                         const nameB = g2.displayName.toLowerCase();
@@ -105,21 +107,26 @@ function getGroupID(token) {
                     const lastGroup = groups[0];
                     countGroupMembers(token, lastGroup.id)
                         .then(groupMembersAmount => {
+                            context.log('- Group members amout exceeds the maximum. Next: Create group');
                             if (groupMembersAmount >= 4800) {
                                 const groupNumber = ("00" + groups.length).slice(-2);
                                 createGroup(token, `guests-${groups.length}` )
                                     .then(groupInfo => {
+                                        context.log(`- Create group guests-${groups.length} OK`);
                                         resolve(groupInfo.id);
                                     })
                                     .catch(() => reject());
                             } else {
+                                context.log('- Group members amount is OK');
                                 resolve(lastGroup.id);
                             }
                         })
                         .catch(() => reject());;
                 } else {
+                    context.log('- Get all group OK but no group exists. Next: create initial group');
                     createGroup(token, `guests-00`)
                         .then(groupInfo => {
+                            context.log('- Create initial group OK');
                             resolve(groupInfo.id);
                         })
                         .catch(() => reject());
@@ -136,10 +143,13 @@ function addUserToGroupId(token, groupId, invitedUserId, context) {
         });
 
         request(options, (error, response, body) => {
+            context.log('Add User To Group request COMPLETED');
             if (!error && response.statusCode == 204) {
-                resolve(result);
+                context.log('Add User To Group request OK');
+                resolve();
             } else {
-                reject(result);
+                context.log('Add User To Group request ERROR');
+                reject();
             }
         });
     });
@@ -154,6 +164,7 @@ module.exports = function (context, req) {
         
         const sendInvitationMessage = req.query.invitation && req.query.invitation == "true";
         
+        context.log('Parameters OK. Next: get token');
         getToken().then(token => {
             /* INVITE A USER TO YOUR TENANT */
             const options = createGraphAPIRequestOptions(token, 'POST', `invitations`, {
@@ -166,14 +177,18 @@ module.exports = function (context, req) {
                 }
             });
 
+            context.log('Token OK. Next: invite user');
             request(options, (error, response, body) => {
                 if (!error && response.statusCode == 201) {
                     const result = JSON.parse(body);
 
-                    getGroupID(token)
+                    context.log('Invite user OK. Next: get group');
+                    getGroupID(token, context)
                         .then(groupId => {
-                            addUserToGroupId(token, groupId, result.invitedUser.id)
+                            context.log('Get group OK. Next: add user to group');
+                            addUserToGroupId(token, groupId, result.invitedUser.id, context)
                                 .then(() => {
+                                    context.log('Everything OK.');
                                     context.res = createResponse({
                                         id: result.invitedUser.id,
                                         inviteRedeemUrl: result.inviteRedeemUrl,
@@ -181,12 +196,15 @@ module.exports = function (context, req) {
                                     });
                                     context.done();
                                 }).catch(() => {
+                                    context.log('An error ocurr while adding the user to the group');
                                     context.done();
                                 });
                         }).catch(() => {
+                            context.log('An error ocurr while getting the group id');
                             context.done();
                         });
                 } else {
+                    context.log('An error ocurr while inviting the user');
                     context.res = createResponse(result, response.statusCode);
                     context.done();
                 }
